@@ -37,7 +37,7 @@ pip install pyodbc openpyxl pywin32
 
 1. **Clone this repo**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/sasams-toolkit.git
+   git clone https://github.com/JarinDatnow/sasams-toolkit.git
    cd sasams-toolkit
    ```
 
