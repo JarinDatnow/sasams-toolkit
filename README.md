@@ -3,7 +3,7 @@
 **Automation scripts for South African schools running SASAMS and D6.**
 
 If you've ever spent hours manually exporting top achiever reports, copying data into templates, and printing 30+ spreadsheets one by one — this toolkit does all of that in seconds.
-
+Built primarily as a portable, version-controlled backup of my own end-of-term workflow — if my machine dies or I change schools, setup is a git clone away instead of a manual rebuild. Shared publicly in case it helps other SA schools running SASAMS.
 ---
 
 ## What is this?
