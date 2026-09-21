@@ -17,5 +17,6 @@ OUTPUT_FOLDER = "top10_output"
 # Current academic year
 DATA_YEAR = "2026"
 
-# Current term
-TERM = "TERM 1"
+# Current term - just the number (1, 2, 3, or 4). "TERM 1" style also still
+# works if you already have it set that way.
+TERM = 3
