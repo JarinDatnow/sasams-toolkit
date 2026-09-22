@@ -1,88 +1,57 @@
 """
-=============================================================================
-  SASAMS TOP 10 — FULL PIPELINE
-  Query SASAMS -> Generate one Top 10 workbook -> Print it
+Generates the school's "Top 10" achiever workbook straight from the Access
+database, replacing the manual process of exporting 28 reports from d6 by hand.
 
-  One command. One workbook, one sheet per class/grade. Done.
-=============================================================================
-  Setup:
-    1. pip install pyodbc openpyxl pywin32
-    2. Copy config.example.py to config.py and fill in your details
-    3. Put TEMPLATE__top_10.xlsx in the templates/ folder
-    4. Run:  python scripts/top10_pipeline.py
+Requires: Python 3 (64-bit), pyodbc, openpyxl, and the 64-bit
+"Microsoft Access Database Engine" ODBC driver (already installed on this
+machine - if you ever run this on a different PC and get a driver error,
+install the free "Microsoft Access Database Engine 2016 Redistributable",
+64-bit version, from Microsoft).
 
-  Flags:
-    --no-print     Generate the workbook only, don't print
-    --discover     Show database tables and columns
-
-  How the PERCENTAGE is calculated (read this before changing the query)
-  -------------------------------------------------------------------------
-  It is tempting to just average ReportMarks.Mark (one already-rounded
-  whole-number mark per subject) or LearnerPromotion.LearnerAverage (a
-  precomputed promotion average). Both were tried and both are WRONG - they
-  can be off by a percentage point from what SASAMS/D6 actually prints,
-  because SASAMS rounds each subject's mark to a whole number for display
-  *before* ReportMarks ever sees it, then D6's own Top Achievers report
-  averages the UNROUNDED per-subject percentage, not the rounded one.
-
-  The unrounded per-subject percentage lives one level deeper, in the
-  continuous-assessment task tables:
-    - LearnerCass          one row per task (test, assignment, exam...)
-                            per learner per subject, with Mark / Criterionscore
-    - SubjectCriteria       defines each task's Weighting toward the subject
-                            total, and tags it to a term via SubHeading
-                            ('Term1' / 'Term2' / 'Term3' / 'Term4')
-  Subject % = sum(Mark/Criterionscore * Weighting) / sum(Weighting) * 100,
-  and the learner's term % = round-half-up of the average of those
-  unrounded subject percentages. Verified against 306 real D6-exported
-  Top Achievers rows for two different terms with zero mismatches - see
-  the README for how this was confirmed.
-=============================================================================
+HOW TO RUN NEXT TERM
+1. Copy the new term's Access database (.mdb) into this folder, or update
+   DB_PATH below to point at it. Always use a COPY, never the live file.
+2. Update TERM and YEAR below.
+3. Run:  python generate_top10.py
+4. The finished workbook appears in the OUTPUT_FOLDER, and a summary is
+   printed to the screen - check it for any ties or warnings.
 """
 
 import copy
 import datetime
 import os
-import sys
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
 
 import pyodbc
-
-# ── Load config ─────────────────────────────────────────────────────────────
-# config.py lives at the repo root (one level up from this script), so make
-# sure it's importable regardless of which directory this script is run from.
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 try:
-    from config import DB_PATH, DB_PASSWORD, DATA_YEAR, TERM, OUTPUT_FOLDER
+    # The real password lives in db_secret.py, which is gitignored and never
+    # committed. Copy db_secret.example.py to db_secret.py and fill it in.
+    from db_secret import DB_PASSWORD
 except ImportError:
-    print("[FAIL] config.py not found.")
-    print("       Copy config.example.py to config.py and fill in your values.")
-    sys.exit(1)
+    raise RuntimeError(
+        "db_secret.py not found. Copy db_secret.example.py to db_secret.py "
+        "in this folder and put the real database password in it."
+    )
 
-TEMPLATE_NAME = "TEMPLATE__top_10.xlsx"
-AUTO_PRINT = True
-
-
-def parse_term_number(term_setting):
-    """Accepts TERM as an int (3) or a string ('TERM 3', 'Term3', '3')."""
-    if isinstance(term_setting, int):
-        return term_setting
-    digits = "".join(ch for ch in str(term_setting) if ch.isdigit())
-    if not digits:
-        raise ValueError(
-            f"Could not read a term number out of TERM={term_setting!r} in config.py"
-        )
-    return int(digits)
-
-
-YEAR = str(DATA_YEAR)
-TERM_NUM = parse_term_number(TERM)
-TERM_LABEL = f"TERM {TERM_NUM}"
+# ---------------------------------------------------------------------------
+# SETTINGS - change these each term
+# ---------------------------------------------------------------------------
+DB_PATH = (
+    r"C:\Users\user\Desktop\Jarin Werk\2026\Claude playground\Top 10 automation"
+    r"\700400012 Balmoral College 22 Sept\700400012 Balmoral College.mdb"
+)
+TEMPLATE_PATH = (
+    r"C:\Users\user\Desktop\Jarin Werk\2026\Claude playground\Top 10 automation"
+    r"\TEMPLATE  top 10.xlsx"
+)
+TERM = 3
+YEAR = 2026
+OUTPUT_FOLDER = (
+    r"C:\Users\user\Desktop\Jarin Werk\2026\Claude playground\Top 10 automation\Output"
+)
 
 # ---------------------------------------------------------------------------
 # Fixed layout - matches TEMPLATE__top_10.xlsx, should not normally change
@@ -94,13 +63,12 @@ DATA_ROW_HEIGHT = 28.5
 COLUMNS = {"nr": "A", "learner_no": "B", "surname": "C", "name": "D", "pct": "E"}
 TOP_N = 10
 
-# Grade -> report-cycle phase, per the CAPS phase structure (adjust here if
-# your school's SASAMS setup groups phases differently)
+# Grade -> report-cycle phase, per the CAPS phase structure this school uses
 PHASE_BY_GRADE = {
     0: "Foundation", 1: "Foundation", 2: "Foundation", 3: "Foundation",
     4: "Intermediate", 5: "Intermediate", 6: "Intermediate",
     7: "Senior", 8: "Senior", 9: "Senior",
-    10: "FET", 11: "FET",
+    10: "FET", 11: "FET", 12: "FET",
 }
 
 # Long-name shrink threshold: names longer than this (in the SURNAME or
@@ -113,42 +81,13 @@ TASK_DATE_WARNING_BUFFER_DAYS = 14
 
 
 def connect():
-    driver = "{Microsoft Access Driver (*.mdb, *.accdb)}"
-    conn_str = f"DRIVER={driver};DBQ={os.path.abspath(DB_PATH)};PWD={DB_PASSWORD};ReadOnly=True;"
-    try:
-        conn = pyodbc.connect(conn_str, readonly=True)
-        print("[OK] Connected to database (read-only)")
-        return conn
-    except (pyodbc.Error, UnicodeDecodeError) as e:
-        print(f"[FAIL] Could not connect: {e}")
-        sys.exit(1)
-
-
-def discover_schema(conn):
-    cursor = conn.cursor()
-    print("\n" + "=" * 60)
-    print("  DATABASE SCHEMA DISCOVERY")
-    print("=" * 60)
-    tables_of_interest = [
-        "Learner_Info", "Classes", "ReportMarks", "ReportCycles",
-        "SchoolTerms", "LearnerCass", "SubjectCriteria", "Subjects",
-    ]
-    for table in cursor.tables(tableType="TABLE"):
-        tname = table.table_name
-        if tname.startswith("MSys"):
-            continue
-        marker = "  <<<" if tname in tables_of_interest else ""
-        print(f"\n  TABLE: {tname}{marker}")
-        try:
-            cursor.execute(f"SELECT TOP 1 * FROM [{tname}]")
-            for d in cursor.description:
-                print(f"    {d[0]:30s} {d[1].__name__}")
-        except pyodbc.Error as e:
-            print(f"    (could not read columns: {e})")
-    print("\n" + "=" * 60)
-    print("A full pre-generated dump of the whole schema also lives in")
-    print("SASAMS_map.json at the repo root if you'd rather grep than query.")
-    print("=" * 60)
+    conn_str = (
+        r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
+        rf"DBQ={DB_PATH};"
+        rf"PWD={DB_PASSWORD};"
+        r"ReadOnly=True;"
+    )
+    return pyodbc.connect(conn_str, readonly=True)
 
 
 def round_half_up(value):
@@ -156,17 +95,17 @@ def round_half_up(value):
 
 
 def get_report_id_map(cursor):
-    """phase name -> ReportId (CycleId) for the configured TERM/DATA_YEAR."""
+    """phase name -> ReportId (CycleId) for the configured TERM/YEAR."""
     cursor.execute(
         "SELECT Phase, CycleId FROM ReportCycles WHERE Datayear = ? AND Term = ?",
-        YEAR, TERM_NUM,
+        str(YEAR), TERM,
     )
     mapping = {row.Phase: row.CycleId for row in cursor.fetchall()}
     missing = set(PHASE_BY_GRADE.values()) - set(mapping)
     if missing:
         raise RuntimeError(
-            f"No ReportCycles row found for Term {TERM_NUM} {YEAR}, phase(s): {missing}. "
-            "Check TERM/DATA_YEAR in config.py and that this report cycle exists."
+            f"No ReportCycles row found for Term {TERM} {YEAR}, phase(s): {missing}. "
+            "Check TERM/YEAR are correct and that report cycle exists in the database."
         )
     return mapping
 
@@ -181,19 +120,19 @@ def get_classes(cursor):
 
 
 def get_term_dates(cursor):
-    """(StartDate, EndDate) for the configured TERM/DATA_YEAR, from SchoolTerms.
+    """(StartDate, EndDate) for the configured TERM/YEAR, from SchoolTerms.
     Used only for the check_task_dates() sanity check below - the actual
     mark calculation matches tasks to the term via SubjectCriteria.SubHeading
     (see unrounded_subject_pct), not by date."""
     cursor.execute(
         "SELECT StartDate, EndDate FROM SchoolTerms WHERE CurrentYear = ? AND Term = ?",
-        YEAR, TERM_NUM,
+        str(YEAR), TERM,
     )
     row = cursor.fetchone()
     if row is None:
         raise RuntimeError(
-            f"No SchoolTerms row found for Term {TERM_NUM} {YEAR}. "
-            "Check TERM/DATA_YEAR in config.py."
+            f"No SchoolTerms row found for Term {TERM} {YEAR}. "
+            "Check TERM/YEAR are correct."
         )
     return row.StartDate, row.EndDate
 
@@ -220,15 +159,23 @@ def check_task_dates(cursor, term_start, term_end):
           AND (sc.DateAdded < ? OR sc.DateAdded > ?)
         ORDER BY sc.DateAdded
         """,
-        YEAR, f"Term{TERM_NUM}", lower, upper,
+        str(YEAR), f"Term{TERM}", lower, upper,
     )
     return cursor.fetchall()
 
 
 def unrounded_subject_pct(cursor, learner_id, subject_id):
-    """See the module docstring for why this exists instead of just
-    averaging ReportMarks.Mark. Returns None if no task breakdown exists
-    for this subject this term (falls back to the rounded Mark)."""
+    """
+    d6's own PERCENTAGE column is built from the *unrounded* weighted
+    average of each subject's assessment tasks for the term, not from the
+    already-rounded whole-number ReportMarks.Mark. Reproduce that: each row
+    in LearnerCass is one task (test, assignment, exam...) with a Mark out
+    of Criterionscore, and SubjectCriteria.Weighting says how much that task
+    counts toward the subject total. Tasks are matched to this term via
+    SubjectCriteria.SubHeading ('Term1'/'Term2'/'Term3'/'Term4') - an
+    explicit term label, not a date guess.
+    Returns None if no task breakdown exists for this subject this term.
+    """
     cursor.execute(
         """
         SELECT lc.Mark, lc.Criterionscore, sc.Weighting
@@ -240,7 +187,7 @@ def unrounded_subject_pct(cursor, learner_id, subject_id):
         WHERE lc.Learnerid = ? AND lc.Subjectid = ? AND lc.Datayear = ?
           AND sc.SubHeading = ?
         """,
-        learner_id, subject_id, YEAR, f"Term{TERM_NUM}",
+        learner_id, subject_id, str(YEAR), f"Term{TERM}",
     )
     rows = cursor.fetchall()
     if not rows:
@@ -301,15 +248,17 @@ def fetch_learners(cursor, grade, class_id, report_id):
 
 def top_10_with_ties(learners):
     if len(learners) <= TOP_N:
-        return learners
+        return learners, False
     cutoff_pct = learners[TOP_N - 1]["pct"]
     extended = list(learners[:TOP_N])
+    had_tie = False
     for learner in learners[TOP_N:]:
         if learner["pct"] == cutoff_pct:
             extended.append(learner)
+            had_tie = True
         else:
             break
-    return extended
+    return extended, had_tie
 
 
 def style_row_like(ws, source_row, target_row):
@@ -324,11 +273,9 @@ def style_row_like(ws, source_row, target_row):
     ws.row_dimensions[target_row].height = DATA_ROW_HEIGHT
 
 
-def fill_sheet(ws, title_c4, learners):
-    from openpyxl.utils import get_column_letter
-
+def fill_sheet(ws, title_c4, term_c6, learners):
     ws["C4"] = title_c4
-    ws["C6"] = TERM_LABEL
+    ws["C6"] = term_c6
 
     last_row = FIRST_DATA_ROW + len(learners) - 1
     # extend styled rows beyond the template's 10 pre-built rows if there are ties
@@ -362,117 +309,80 @@ def fill_sheet(ws, title_c4, learners):
     ws.print_area = f"A1:{get_column_letter(5)}{max(last_row, LAST_TEMPLATE_DATA_ROW)}"
 
 
-def find_template_path():
-    for candidate in (REPO_ROOT / "templates" / TEMPLATE_NAME, SCRIPT_DIR / TEMPLATE_NAME):
-        if candidate.exists():
-            return candidate
-    print(f"[FAIL] {TEMPLATE_NAME} not found. Put it in the templates/ folder.")
-    sys.exit(1)
+def generate(db_path=None, db_password=None, template_path=None, term=None,
+             year=None, output_folder=None):
+    """Run a full Top 10 generation. Any argument left as None falls back to
+    the module-level SETTINGS above. Returns the path of the saved workbook.
+    Used both by main() (CLI run with the settings at the top of this file)
+    and by the web UI (webapp/server.py), which passes its own values in."""
+    global DB_PATH, DB_PASSWORD, TEMPLATE_PATH, TERM, YEAR, OUTPUT_FOLDER
+    if db_path is not None:
+        DB_PATH = db_path
+    if db_password is not None:
+        DB_PASSWORD = db_password
+    if template_path is not None:
+        TEMPLATE_PATH = template_path
+    if term is not None:
+        TERM = term
+    if year is not None:
+        YEAR = year
+    if output_folder is not None:
+        OUTPUT_FOLDER = output_folder
 
-
-def generate_workbook(cursor, template_path, output_dir):
-    from openpyxl import load_workbook
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    cnxn = connect()
+    cursor = cnxn.cursor()
 
     report_ids = get_report_id_map(cursor)
     classes = get_classes(cursor)
+    term_start, term_end = get_term_dates(cursor)
+    date_warnings = check_task_dates(cursor, term_start, term_end)
 
-    template_wb = load_workbook(str(template_path))
+    template_wb = load_workbook(TEMPLATE_PATH)
     template_ws = template_wb[TEMPLATE_SHEET_NAME]
 
-    summary = []  # (sheet name, learner count, extra tie rows)
+    summary = []  # (sheet name, learner count, tie count)
 
+    # --- Grade R to 6: one sheet per class ---
     for grade, class_id, class_name in classes:
         report_id = report_ids[PHASE_BY_GRADE[grade]]
-        final_list = top_10_with_ties(fetch_learners(cursor, grade, class_id, report_id))
+        learners = fetch_learners(cursor, grade, class_id, report_id)
+        final_list, had_tie = top_10_with_ties(learners)
 
         ws = template_wb.copy_worksheet(template_ws)
         ws.title = f"Grade {class_name}"
-        fill_sheet(ws, f"GRADE  {class_name}", final_list)
+        fill_sheet(ws, f"GRADE  {class_name}", f"TERM {TERM}", final_list)
 
         extra = len(final_list) - min(TOP_N, len(final_list))
         summary.append((ws.title, len(final_list), extra))
 
-    for grade in range(7, 12):
+    # --- Grade 7 to 12: one sheet per grade, classes combined ---
+    for grade in range(7, 13):
         report_id = report_ids[PHASE_BY_GRADE[grade]]
-        final_list = top_10_with_ties(fetch_learners(cursor, grade, None, report_id))
+        learners = fetch_learners(cursor, grade, None, report_id)
+        final_list, had_tie = top_10_with_ties(learners)
 
         ws = template_wb.copy_worksheet(template_ws)
         ws.title = f"Grade {grade}"
-        fill_sheet(ws, f"GRADE  {grade}", final_list)
+        fill_sheet(ws, f"GRADE  {grade}", f"TERM {TERM}", final_list)
 
         extra = len(final_list) - min(TOP_N, len(final_list))
         summary.append((ws.title, len(final_list), extra))
 
+    # remove the template's own sheets
     del template_wb[TEMPLATE_SHEET_NAME]
     if "Worksheet 1" in template_wb.sheetnames:
         del template_wb["Worksheet 1"]
 
-    output_dir.mkdir(exist_ok=True)
-    out_path = output_dir / f"Top 10 - Term {TERM_NUM} {YEAR}.xlsx"
-    template_wb.save(str(out_path))
-    return out_path, summary
+    cnxn.close()
 
+    out_name = f"Top 10 - Term {TERM} {YEAR}.xlsx"
+    out_path = os.path.join(OUTPUT_FOLDER, out_name)
+    template_wb.save(out_path)
 
-def mass_print(workbook_path):
-    try:
-        import win32com.client
-    except ImportError:
-        print("[SKIP] pywin32 not installed — can't auto-print. Run: pip install pywin32")
-        return
-
-    print(f"\n[>>] Printing every sheet in {workbook_path.name} to default printer...")
-    excel = win32com.client.Dispatch("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
-
-    printed = 0
-    try:
-        wb = excel.Workbooks.Open(str(workbook_path.resolve()))
-        try:
-            for ws in wb.Worksheets:
-                try:
-                    ws.PrintOut()
-                    printed += 1
-                except Exception as e:
-                    print(f"  ERROR printing {ws.Name}: {e}")
-        finally:
-            wb.Close(SaveChanges=False)
-        print(f"[OK] Sent {printed}/{wb.Worksheets.Count} sheet(s) to printer")
-    finally:
-        excel.Quit()
-
-
-def main():
-    args = sys.argv[1:]
-
-    if "--discover" in args:
-        conn = connect()
-        discover_schema(conn)
-        conn.close()
-        return
-
-    no_print = "--no-print" in args or not AUTO_PRINT
-
-    print("=" * 60)
-    print("  SASAMS TOP 10 PIPELINE")
-    print(f"  Year: {YEAR}  |  {TERM_LABEL}")
-    print("=" * 60)
-
-    template_path = find_template_path()
-
-    print("\n[STEP 1] Querying SASAMS database...")
-    conn = connect()
-    cursor = conn.cursor()
-    term_start, term_end = get_term_dates(cursor)
-    date_warnings = check_task_dates(cursor, term_start, term_end)
-
-    print(f"\n[STEP 2] Generating workbook...")
-    output_dir = SCRIPT_DIR / OUTPUT_FOLDER
-    out_path, summary = generate_workbook(cursor, template_path, output_dir)
-    conn.close()
-
-    print(f"[OK] Saved: {out_path}")
-    print(f"\n{'Sheet':<14}{'Learners':>10}{'Extra tie rows':>16}")
+    print(f"\nSaved: {out_path}")
+    print(f"Generated {len(summary)} sheets:\n")
+    print(f"{'Sheet':<14}{'Learners':>10}{'Extra tie rows':>16}")
     for name, count, extra in summary:
         tie_note = f"+{extra}" if extra else ""
         print(f"{name:<14}{count:>10}{tie_note:>16}")
@@ -487,7 +397,7 @@ def main():
 
     if date_warnings:
         print(
-            f"\nWARNING: {len(date_warnings)} task(s) are tagged {TERM_LABEL} "
+            f"\nWARNING: {len(date_warnings)} task(s) are tagged Term {TERM} "
             f"but their own date is more than {TASK_DATE_WARNING_BUFFER_DAYS} days "
             f"outside the term's official {term_start:%Y-%m-%d} to {term_end:%Y-%m-%d} "
             "window. They ARE still included in the calculation (SubHeading is "
@@ -498,20 +408,15 @@ def main():
         for w in date_warnings:
             print(f"{(w.Name or ''):<40}{w.Description:<35}{w.DateAdded:%Y-%m-%d}  {w.Weighting:>6.1f}")
     else:
-        print(f"\nNo {TERM_LABEL} tasks dated outside the term window - nothing to flag.")
+        print(f"\nNo Term {TERM} tasks dated outside the term window - nothing to flag.")
 
-    if no_print:
-        print(f"\n[STEP 3] Printing skipped (--no-print)")
-    else:
-        print(f"\n[STEP 3] Printing...")
-        mass_print(out_path)
+    print(f"\nRun finished: {datetime.datetime.now():%Y-%m-%d %H:%M:%S}")
 
-    print("\n" + "=" * 60)
-    print(f"  DONE — {len(summary)} sheets in {out_path.name}")
-    if not no_print:
-        print(f"  Sent to printer")
-    print(f"  File in: {output_dir}")
-    print("=" * 60)
+    return out_path
+
+
+def main():
+    generate()
 
 
 if __name__ == "__main__":

@@ -1,14 +1,25 @@
-# Config with real credentials
-config.py
+# Real school data - never commit (contains actual learner records)
+**/700400012 Balmoral College*/
+Top 10 automation/T3/
+Top 10 automation/Output/
+Annexure K automation/Output/
 
-# Database files
+# Filled/submitted Annexure K workbooks contain real learner marks, and the
+# R-7 template ships as a province-wide dump of every other school's
+# name/EMIS number - only the small school-specific 8-12 templates are safe
+# to keep as an example. The Top 10 template has no such issue.
+Annexure K automation/*.xlsx
+!Annexure K automation/*8-12 Template.xlsx
+
+# Access database / lock files, wherever they end up
 *.mdb
 *.accdb
+*.laccdb
 *.ldb
+~$*.xlsx
 
-# Output files
-top10_output/
-*.csv
+# Real database passwords - never commit
+db_secret.py
 
 # Python
 __pycache__/

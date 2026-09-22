@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TOP 10 CLUB</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="grain"></div>
+
+<header class="hero">
+  <svg class="soap" viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <rect x="4" y="4" width="92" height="52" rx="18" fill="#e8e2d0"/>
+    <rect x="4" y="4" width="92" height="52" rx="18" fill="none" stroke="#b8ae8f" stroke-width="1.5"/>
+    <text x="50" y="35" text-anchor="middle" font-family="Georgia, serif" font-size="11" fill="#8a7f5e" letter-spacing="2">TOP 10</text>
+  </svg>
+  <h1>TOP&nbsp;10<span>CLUB</span></h1>
+  <p class="tagline" id="tagline">You are not your test average.</p>
+
+  <div class="mode-toggle" role="tablist">
+    <button type="button" class="mode-btn active" id="modeTopTen" data-mode="topten">TOP 10</button>
+    <button type="button" class="mode-btn" id="modeAnnexureK" data-mode="annexurek">ANNEXURE K</button>
+  </div>
+</header>
+
+<main class="rules">
+
+  <section class="rule">
+    <div class="rule-number">01</div>
+    <div class="rule-body">
+      <h2 id="rule1Heading">The first rule of Top 10 Club</h2>
+      <p class="rule-sub">is you point it at the database.</p>
+      <div class="field-row">
+        <input type="text" id="dbPath" placeholder="C:\path\to\database.mdb" autocomplete="off">
+        <button type="button" id="browseDb" class="btn-ghost">BROWSE</button>
+      </div>
+      <div class="field-row password-row">
+        <input type="password" id="dbPassword" placeholder="leave blank to use the saved password" autocomplete="off">
+        <button type="button" id="togglePw" class="btn-ghost small">SHOW</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="rule">
+    <div class="rule-number">02</div>
+    <div class="rule-body">
+      <h2 id="rule2Heading">The second rule of Top 10 Club</h2>
+      <p class="rule-sub">is you say which term, and which year.</p>
+      <div class="field-row two-up">
+        <div class="field">
+          <label for="term">TERM</label>
+          <select id="term">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="year">YEAR</label>
+          <input type="number" id="year" placeholder="2026">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="rule" id="annexureKSection">
+    <div class="rule-number">03</div>
+    <div class="rule-body">
+      <h2>The third rule (Annexure K only)</h2>
+      <p class="rule-sub">is you say which groupings, and which templates.</p>
+
+      <div class="field-row grouping-row">
+        <label class="checkbox-field">
+          <input type="checkbox" id="grouping8to12" value="8-12">
+          <span>8-12</span>
+        </label>
+        <label class="checkbox-field">
+          <input type="checkbox" id="groupingR7" value="R-7">
+          <span>R-7</span>
+        </label>
+      </div>
+
+      <div class="field" id="template8to12Field">
+        <label for="template8to12">8-12 TEMPLATE</label>
+        <div class="field-row">
+          <input type="text" id="template8to12" placeholder="C:\path\to\Annexure K 8-12 Template.xlsx" autocomplete="off">
+          <button type="button" id="browseTemplate8to12" class="btn-ghost">BROWSE</button>
+        </div>
+      </div>
+
+      <div class="field" id="templateR7Field">
+        <label for="templateR7">R-7 TEMPLATE</label>
+        <div class="field-row">
+          <input type="text" id="templateR7" placeholder="C:\path\to\Annexure K R-7 Template.xlsx" autocomplete="off">
+          <button type="button" id="browseTemplateR7" class="btn-ghost">BROWSE</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="rule" id="outputFolderSection">
+    <div class="rule-number" id="outputRuleNumber">03</div>
+    <div class="rule-body">
+      <h2>The last rule</h2>
+      <p class="rule-sub">is you decide where the finished workbook goes.</p>
+      <div class="field-row">
+        <input type="text" id="outputFolder" placeholder="Output folder" autocomplete="off">
+        <button type="button" id="browseFolder" class="btn-ghost">BROWSE</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="rule fight-section">
+    <button type="button" id="generateBtn" class="btn-fight">
+      <span class="btn-fight-text">GENERATE</span>
+    </button>
+    <p class="fine-print">If this is your first time at Top 10 Club, you have to fight.</p>
+  </section>
+
+  <section id="resultBanner" class="result hidden"></section>
+
+  <section id="logSection" class="log-section hidden">
+    <h3>SPACE MONKEY LOG</h3>
+    <pre id="logOutput"></pre>
+  </section>
+
+</main>
+
+<footer>
+  <p>runs entirely on this machine &mdash; nothing leaves the building.</p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
