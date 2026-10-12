@@ -24,6 +24,10 @@ the finished workbook, plus one shared local web UI to run either of them:
   needed, nothing leaves your PC) that runs either generator: pick TOP 10 or
   ANNEXURE K at the top of the page, fill in the fields, click GENERATE.
   Launch it by double-clicking `Top 10 automation/Launch Top 10 Club.vbs`.
+- **[`MCP server/`](MCP%20server/)** — Lets Claude Code answer questions
+  about the database in plain words (subject results, term-on-term drops,
+  at-risk learners, attendance), read-only and without learner names ever
+  leaving the PC. See its README for setup and the privacy rules.
 
 ## What is SASAMS?
 

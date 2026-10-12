@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-12
+
+- Added `MCP server/`: an MCP server so Claude Code can query the SASAMS
+  database directly. Ready-made tools cover subject results, term
+  comparisons, at-risk learners, attendance, single-learner marks and the
+  existing Top 10 / Annexure K generators; `run_select` handles anything
+  else. Read-only and SELECT-only; learners are identified by internal ID,
+  personal columns are blocked, and named lists for teachers are written to
+  a local Excel file instead of being returned to Claude.
+- Added a fake SASAMS database and an end-to-end test
+  (`MCP server/tests/test_server.py`) that checks no names leak and unsafe
+  queries are refused.
+
 ## 2026-09-22 (2)
 
 - Replaced the old `scripts/`/`templates/`/`config.py` layout with two
